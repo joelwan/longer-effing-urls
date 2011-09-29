@@ -1,0 +1,7 @@
+Options -Indexes
+RewriteEngine On
+RewriteRule ^index/$ views/create.php [L]
+RewriteRule ^ajax/create/ ajax/lengthen.php [L]
+RewriteRule ^ajax/getlongerurls/ ajax/json.php [L]
+RewriteRule ^ajax/report/ ajax/report.php [L]
+RewriteRule ^(?!(views|ajax|images|js|css|objects|plugins|setup))([0-9a-z]*)?/(.*)?$ /index.php?key=$2 [L]

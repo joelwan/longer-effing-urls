@@ -1,0 +1,147 @@
+<?php
+
+define('ALLOWED_CHARS', '0123456789abcdefghijklmnopqrstuvwxyz');
+
+
+class Longer {
+	
+	public static $exceptions = array(
+		'incompatible-browser-facebook' => 'this-is-a-facebook-link',
+	);
+	
+	public static function generateHash($dbid, $base = ALLOWED_CHARS) {
+		$length = strlen($base);
+		$out = '';
+		$dbid += 1000000;
+		while($dbid > $length - 1)
+		{
+			$out = $base[fmod($dbid, $length)].$out;
+			$dbid = floor( $dbid / $length );
+		}
+		return $base[$dbid].$out;
+	}
+	
+	public static function getIdFromHash($hash, $base = ALLOWED_CHARS) {
+		$length = strlen($base);
+		$dbid = 0;
+		$exp = 0;
+		for ($i=strlen($hash)-1; $i>-1; $i--){
+			$char = substr($hash, $i, 1);
+			$dbid += strpos(ALLOWED_CHARS, $char) * pow($length, $exp);
+			$exp++;
+		}
+		return $dbid-1000000;
+	}
+	
+	public static function elongate($url, $lastDomain='') {
+		$result = array();
+		$result['hash'] = array();
+		$result['snippets'] = array();
+		$result['errormsg'] = array();
+		
+		//determine if link points to text/html first
+		$http_headers = get_headers($url);
+		$allowedTarget = false;
+		foreach ($http_headers as $value) {
+			if (strpos(strtolower($value), 'content-type:') > -1) {
+				if (strpos(strtolower($value), 'text') > 1) {
+					$allowedTarget = true;
+				} else {
+					$contentType = substr($value, 13);
+					array_push($result['errormsg'], 'Cannot lengthen filetype '.$contentType);
+				}
+				break;
+			}
+		}
+		
+		if ($allowedTarget == true) {
+			$curl_handle=curl_init();
+			curl_setopt($curl_handle,CURLOPT_URL, $url);
+			curl_setopt($curl_handle,CURLOPT_CONNECTTIMEOUT,10);
+			curl_setopt($curl_handle,CURLOPT_RETURNTRANSFER,1);
+			//curl_setopt ($curl_handle, CURLOPT_CAINFO, "/cacert.pem");
+			$buffer = html_entity_decode(curl_exec($curl_handle));
+			$http_status = curl_getinfo($curl_handle, CURLINFO_HTTP_CODE);
+			curl_close($curl_handle);
+			if ($http_status == '200' || $http_status == false) {
+				
+				$match_title_tags = "/(<title([^>]*)?>(.*?)<\/title>)/ims";
+				$match_h_tags = "/(<h1([^>]*)?>(.*?)<\/h1>)/ims";
+				$match_p_tags = "/(<p>(.*?)<\/p>)/ims";
+				preg_match_all($match_title_tags, $buffer, $titleList, PREG_PATTERN_ORDER);
+				preg_match_all($match_h_tags, $buffer, $hList, PREG_PATTERN_ORDER);
+				preg_match_all($match_p_tags, $buffer, $pList, PREG_PATTERN_ORDER);
+		
+				$title = "";
+				if (sizeof($titleList[3]) > 0) {
+					$title = $titleList[3][0];
+					$title = Longer::sanitize($title);
+					if (strlen($title) > 0) {
+						if (isset(Longer::$exceptions[$title])) {
+							array_push($result['snippets'], Longer::$exceptions[$title]);
+						} else {
+							array_push($result['snippets'], $title);
+						}
+					}
+				}
+				
+				$h = "";
+				if (sizeof($hList[3]) > 0) {
+					$h = $hList[3][0];
+					$h = Longer::sanitize($h);
+					if (strlen($h) > 0) {
+						array_push($result['snippets'], $h);
+					}
+				}
+				
+				$p = "";
+				if (sizeof($pList[0]) > 0)
+				foreach ($pList[0] as $p){
+					$pParts = split('\.', $p);				
+					foreach ($pParts as $pPart) {
+						$pPart = Longer::sanitize($pPart);
+						if (strlen($pPart) > 0) {
+							array_push($result['snippets'], $pPart);
+						}
+					} 
+				}
+			} else if ($http_status == '301' || $http_status == '302') {
+				$parse = '';
+				$originurl = $url;
+				foreach ($http_headers as $value) {
+					if (strpos(strtolower($value), 'location: ') > -1) {
+						$url = substr($value, 10);
+						$parse = parse_url($url);
+						if ($parse['host'] == '') {
+							if ($lastDomain != ''){
+								$url = 'http://'.$lastDomain.(substr($url, 0, 1) == '/' ? '' : '/').$url;
+							} else {
+								$url = $originurl.(substr($url, 0, 1) == '/' ? '' : '/').$url;
+							}
+						}
+						return Longer::elongate($url, $parse['host']);
+					}
+				}
+			}  else if ($http_status == '404') {
+				array_push($result['snippets'], 'page-not-found');
+			}
+		}
+		return $result;
+	}
+	
+	public static function sanitize($title) {
+		$title = preg_replace("/(&#[0-9]*;)/", '', html_entity_decode(strip_tags($title)));
+		$title = preg_replace("/[^a-zA-Z0-9 ]/", '', $title);
+		$title = preg_replace("/([,.;:\/\\\n\t ])/", '-', strtolower(trim($title)));
+		
+		$chars = array('-');
+		foreach ($chars as $char) {
+			$find = $char.$char;
+			while(strpos($title, $find) > -1) {
+				$title = str_ireplace($find, $char, $title);
+			}
+		}
+		return $title;
+	}
+}
+?>
